@@ -11,8 +11,8 @@ IMAGE_DIR = Path("assets/images")
 SOUND_DIR = Path("assets/sounds")
 GRAVITY = 2000
 INITIAL_SPEED = -400
-INCREASE_FACTOR = 1.1
-DIFFICULTY_INTERVAL = 5
+DIFFICULTY_MULTIPLIER = 1.1
+DIFFICULTY_INTERVAL = 3
 
 
 clock = pg.Clock()
@@ -47,10 +47,17 @@ class Spencer(pg.sprite.Sprite):
     MAX_AIR_TIME = 0.2
     ACCEL = 2000
     FRICTION = 0.9
+    FLIP_SECS = 0.3
+
+    JUMP_SOUNDS = [load_sound("") for sound in ()]
 
     def __init__(self, dest, *groups):
         super().__init__(*groups)
-        self.image, self.rect = load_image("spence.png", scale=0.2)
+        self.image, _ = load_image("spence.png", scale=0.2)
+        self.orig_image = self.image
+
+        self.image = pg.transform.rotate(self.image, 10)
+        self.rect = self.image.get_rect()
         self.rect.midbottom = dest
 
         self.velocity = pg.Vector2(0, 0)
@@ -58,8 +65,15 @@ class Spencer(pg.sprite.Sprite):
         self.on_ground = True
         self.air_time = 0
 
+        self.flip_timer = 0
+
     def update(self, delta=None, **kwargs):
+        if self.on_ground:
+            if self.flip_timer > Spencer.FLIP_SECS:
+                self.flip_timer = 0
+                self.image = pg.transform.flip(self.image, flip_x=True, flip_y=False)
         if delta is not None:
+            self.flip_timer += delta
             if not self.on_ground:
                 self.velocity.y += GRAVITY * delta
                 self.air_time += delta
@@ -89,12 +103,39 @@ class Spencer(pg.sprite.Sprite):
         if direction == "left":
             self.velocity.x -= Spencer.ACCEL * delta
 
+    def emote(self):
+        emotes = (self.peace,)
+        random.choice(emotes)()
 
-print(pg.Vector2(1, 2) * 5)
+    def peace(self):
+        Peace(self, all_sprites)
+
+
+class Peace(pg.sprite.Sprite):
+    IMAGE, _ = load_image("peace.png", scale=0.06)
+    LIFETIME = 0.5
+
+    def __init__(self, target, *groups):
+        super().__init__(*groups)
+        self.image = pg.transform.rotate(Peace.IMAGE, 15)
+        self.target = target
+        self.rect = self.image.get_rect(midright=self.target.rect.midleft)
+        self.age = 0
+        peace_sound.play()
+
+    def update(self, delta, *args, **kwargs):
+        self.rect.midright = self.target.rect.midleft
+        self.rect.x += 60
+        self.rect.y -= 30
+        self.age += delta
+        if self.age > Peace.LIFETIME:
+            self.kill()
 
 
 class Ground(pg.sprite.Sprite):
     IMAGE, _ = load_image("ground.png", scale=0.2)
+
+    distance_since_cactus = 0
 
     def __init__(self, *groups, **kwargs):
         super().__init__(*groups)
@@ -103,10 +144,14 @@ class Ground(pg.sprite.Sprite):
 
     def update(self, delta=None, **kwargs):
         if delta is not None:
-            self.rect.move_ip(speed * delta, 0)
+            distance = speed * delta
+            Ground.distance_since_cactus += distance
+            self.rect.move_ip(distance, 0)
 
 
 class Cactus(pg.sprite.Sprite):
+    BEFORE_ALLOWABLE_SPAWN = 100
+    AFTER_ALLOWABLE_SPAWN = 500
     IMAGE_RECT_TUPLES = [
         load_image(fp.name, scale=0.2) for fp in IMAGE_DIR.glob("cactus*.png")
     ]
@@ -117,6 +162,7 @@ class Cactus(pg.sprite.Sprite):
         self.image, _ = random.choice(Cactus.IMAGE_RECT_TUPLES)
         self.rect = self.image.get_rect()
         self.rect.left = screen.get_rect().right
+        Ground.distance_since_cactus = 0
         self.passed = False
 
     def update(self, delta=None, **kwargs):
@@ -172,11 +218,22 @@ running = True
 spencer = Spencer((75, 400), all_sprites)
 
 thunder_sound = load_sound("thunder.mp3")
+peace_sound = load_sound("peace.mp3")
 speed = INITIAL_SPEED
+
 
 difficulty_timer = 0
 score = Score(all_sprites)
 
+
+def play_song():
+    song = random.choice(list(SOUND_DIR.glob("song*")))
+    pg.mixer.music.load(song)
+    pg.mixer.music.set_volume(0.7)
+    pg.mixer.music.play(-1)
+
+
+play_song()
 
 while running:
     delta = clock.tick(FPS) / 1000
@@ -190,13 +247,6 @@ while running:
 
     keys = pg.key.get_pressed()
 
-    difficulty_timer += delta
-    if difficulty_timer > DIFFICULTY_INTERVAL:
-        difficulty_timer = 0
-        speed *= INCREASE_FACTOR
-        Cactus.spawn_chance *= INCREASE_FACTOR
-        print(Cactus.spawn_chance)
-
     if keys[pg.K_SPACE]:
         spencer.jump()
 
@@ -206,7 +256,12 @@ while running:
         if keys[pg.K_a]:
             spencer.move("left")
 
-    if random.random() < (Cactus.spawn_chance * delta):
+    # TODO: change to time not distance?
+    if random.random() < (Cactus.spawn_chance * delta) and not (
+        Cactus.BEFORE_ALLOWABLE_SPAWN
+        < -Ground.distance_since_cactus
+        < Cactus.AFTER_ALLOWABLE_SPAWN
+    ):
         Cactus(all_sprites, cactus_group)
 
     if not ground_group:
@@ -224,23 +279,27 @@ while running:
     ):
         ground_group.sprites()[0].kill()
 
-    if spencer.rect.collideobjects(cactus_group.sprites()):
+    if spencer.rect.collideobjects(cactus_group.sprites()) and spencer.alive():
         thunder_sound.play()
         spencer.kill()
+        speed = 0
         Explosion(spencer, all_sprites)
-
-        running = False
 
     if cactus_group:
         cactus = cactus_group.sprites()[0]
         if spencer.rect.center >= cactus.rect.center and not cactus.passed:
             cactus.passed = True
             score.increase(1)
+            if random.random() < 1.0:
+                spencer.emote()
+            if not score.score % DIFFICULTY_INTERVAL:
+                speed *= DIFFICULTY_MULTIPLIER
+                Cactus.spawn_chance *= DIFFICULTY_MULTIPLIER
 
-    all_sprites.update(delta=delta, ground_group=ground_group)
+    all_sprites.update(delta=delta)
 
     all_sprites.draw(screen)
     pg.display.flip()
 
-pg.time.wait(1000)
+
 pg.quit()
