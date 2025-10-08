@@ -1,6 +1,7 @@
 import pygame as pg
 from pathlib import Path
 import random
+import math
 
 pg.init()
 
@@ -51,7 +52,6 @@ class Spencer(pg.sprite.Sprite):
 
     JUMP_SOUNDS = {fp.stem: load_sound(fp.name) for fp in SOUND_DIR.glob("jump*")}
     flint_sound = load_sound("flint.opus")
-    nether_sound = load_sound("nether.opus")
 
     IMAGES = {
         fp.stem: load_image(fp.name, scale=0.2) for fp in IMAGE_DIR.glob("spence*.png")
@@ -65,6 +65,7 @@ class Spencer(pg.sprite.Sprite):
         self.rotate_factor = 10
         self.image = pg.transform.rotate(self.orig_image, self.rotate_factor)
         self.rect = self.image.get_rect()
+        self.rect.inflate_ip(-30, -30)
         self.rect.midbottom = dest
 
         self.velocity = pg.Vector2(0, 0)
@@ -104,7 +105,7 @@ class Spencer(pg.sprite.Sprite):
         self.rect.clamp_ip(screen.get_rect())
 
     def jump(self):
-        emotes = (self.legs_together, self.hot_hairy, self.sneeze)
+        emotes = (self.legs_together, self.hot_hairy, self.sneeze, self.nether)
         if self.on_ground and random.random() < 0.3:
             random.choice(emotes)()
 
@@ -120,6 +121,9 @@ class Spencer(pg.sprite.Sprite):
 
     def sneeze(self):
         self.JUMP_SOUNDS["jump2"].play()
+
+    def nether(self):
+        self.JUMP_SOUNDS["jump3"].play()
 
     def move(self, direction):
         if direction == "right":
@@ -165,7 +169,7 @@ class Peace(pg.sprite.Sprite):
 
     def update(self, delta, *args, **kwargs):
         self.rect.midleft = self.target.rect.midright
-        self.rect.move_ip(-50, -30)
+        self.rect.move_ip(-30, -30)
 
         self.age += delta
         if self.age > Peace.LIFETIME:
@@ -233,9 +237,7 @@ class FastFall(pg.sprite.Sprite):
 
 
 class Ground(pg.sprite.Sprite):
-    IMAGE = load_image("ground.png", scale=0.2)
-
-    distance_since_cactus = 0
+    IMAGE = load_image("tile.png", scale=1)
 
     def __init__(self, *groups, **kwargs):
         super().__init__(*groups)
@@ -245,7 +247,6 @@ class Ground(pg.sprite.Sprite):
     def update(self, delta=None, **kwargs):
         if delta is not None:
             distance = speed * delta
-            Ground.distance_since_cactus += distance
             self.rect.move_ip(distance, 0)
 
 
@@ -254,14 +255,16 @@ class Cactus(pg.sprite.Sprite):
     AFTER_ALLOWABLE_SPAWN = 500
     MAX_DISTANCE_SINCE_SPAWN = 1500
     IMAGES = [load_image(fp.name, scale=0.2) for fp in IMAGE_DIR.glob("cactus*.png")]
-    spawn_chance = 0.25
+    spawn_chance = 0.0
+    distance_since_spawn = 0.0
 
     def __init__(self, *groups):
         super().__init__(*groups)
         self.image = random.choice(Cactus.IMAGES)
         self.rect = self.image.get_rect()
         self.rect.left = screen.get_rect().right
-        Ground.distance_since_cactus = 0
+        self.rect.inflate_ip(-10, -10)
+        Cactus.distance_since_spawn = 0
         self.passed = False
 
     def update(self, delta=None, **kwargs):
@@ -305,6 +308,35 @@ class Score(pg.sprite.Sprite):
         self.image = self.font.render(f"Score: {self.score}", False, "black")
 
 
+LAO_CLICKED = pg.event.custom_type()
+lao_event = pg.event.Event(LAO_CLICKED)
+
+
+class Lao(pg.sprite.Sprite):
+    IMAGE = load_image("lao.png", scale=0.1)
+
+    def __init__(self, *groups):
+        super().__init__(*groups)
+        self.image = Lao.IMAGE
+        self.rect = self.image.get_rect()
+        self.position = pg.Vector2(screen.get_rect().right, 50)
+        self.rect.topleft = self.position
+        self.sin = 0
+
+    def update(self, delta, *args, **kwargs):
+        self.sin += delta
+        if delta is not None:
+            distance = speed * delta
+            self.rect.move_ip(distance, math.sin(self.sin * 10) * 5)
+            print(math.sin(self.sin))
+
+        pos = pg.mouse.get_pos()
+        click, _, _ = pg.mouse.get_pressed()
+        if self.rect.collidepoint(pos) and click:
+            pg.event.post(lao_event)
+            self.kill()
+
+
 all_sprites = pg.sprite.Group()
 ground_group = pg.sprite.Group()
 cactus_group = pg.sprite.Group()
@@ -319,6 +351,7 @@ spencer = Spencer((75, 400), all_sprites)
 thunder_sound = load_sound("thunder.mp3")
 peace_sound = load_sound("peace.mp3")
 freddy_sound = load_sound("freddy.opus")
+coin_sound = load_sound("coin.mp3")
 speed = INITIAL_SPEED
 
 
@@ -358,8 +391,24 @@ def game_over():
     random.choices(choices, weights=weights, k=1)[0]()
 
 
-play_song()
+def move_ground():
+    if not ground_group:
+        Ground(all_sprites, ground_group, bottomleft=screen.get_rect().bottomleft)
+    if ground_group.sprites()[-1].rect.right <= screen.get_rect().right + 20:
+        Ground(
+            all_sprites,
+            ground_group,
+            bottomleft=ground_group.sprites()[-1].rect.bottomright,
+        )
+    if (
+        ground_group.sprites()[0].rect.right <= screen.get_rect().left
+        and len(ground_group) > 1
+    ):
+        ground_group.sprites()[0].kill()
 
+
+play_song()
+last_score = 0
 while running:
     delta = clock.tick(FPS) / 1000
     screen.blit(background)
@@ -369,6 +418,9 @@ while running:
             event.type == pg.KEYDOWN and event.key == pg.K_ESCAPE
         ):
             running = False
+        if event.type == LAO_CLICKED:
+            coin_sound.play()
+            score.increase(3)
 
     keys = pg.key.get_pressed()
 
@@ -383,30 +435,18 @@ while running:
     if keys[pg.K_s]:
         spencer.move("down")
 
+    move_ground()
+
+    Cactus.distance_since_spawn += speed * delta
     # TODO: change to time not distance?
-    if -Ground.distance_since_cactus > Cactus.MAX_DISTANCE_SINCE_SPAWN:
+    if -Cactus.distance_since_spawn > Cactus.MAX_DISTANCE_SINCE_SPAWN:
         Cactus(all_sprites, cactus_group)
     if random.random() < (Cactus.spawn_chance * delta) and not (
         Cactus.BEFORE_ALLOWABLE_SPAWN
-        < -Ground.distance_since_cactus
+        < -Cactus.distance_since_spawn
         < Cactus.AFTER_ALLOWABLE_SPAWN
     ):
         Cactus(all_sprites, cactus_group)
-
-    if not ground_group:
-        Ground(all_sprites, ground_group, bottomleft=screen.get_rect().bottomleft)
-
-    if (
-        ground_group.sprites()[0].rect.right <= screen.get_rect().right + 20
-        and len(ground_group) < 2
-    ):
-        Ground(all_sprites, ground_group, bottomleft=screen.get_rect().bottomright)
-
-    if (
-        ground_group.sprites()[0].rect.right <= screen.get_rect().left
-        and len(ground_group) > 1
-    ):
-        ground_group.sprites()[0].kill()
 
     if spencer.rect.collideobjects(cactus_group.sprites()) and spencer.alive():
         game_over()
@@ -418,9 +458,14 @@ while running:
             score.increase(1)
             if random.random() < 0.3:
                 spencer.emote()
-            if not score.score % DIFFICULTY_INTERVAL:
+            if score.score - last_score >= 3:
+                print("inc")
+                last_score = score.score
                 speed *= DIFFICULTY_MULTIPLIER
                 Cactus.spawn_chance *= DIFFICULTY_MULTIPLIER
+
+    if random.random() < 0.10 * delta:
+        Lao(all_sprites)
 
     all_sprites.update(delta=delta)
 
