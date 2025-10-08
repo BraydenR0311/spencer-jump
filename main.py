@@ -19,13 +19,13 @@ clock = pg.Clock()
 screen = pg.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 
 
-def load_image(name, scale=1.0, **kwargs):
+def load_image(name, scale=1.0):
     fullname = IMAGE_DIR / name
     image = pg.image.load(fullname).convert_alpha()
 
     image = pg.transform.scale_by(image, scale)
 
-    return image, image.get_rect(**kwargs)
+    return image
 
 
 def load_sound(name):
@@ -49,29 +49,40 @@ class Spencer(pg.sprite.Sprite):
     FRICTION = 0.9
     FLIP_SECS = 0.3
 
-    JUMP_SOUNDS = [load_sound("") for sound in ()]
+    JUMP_SOUNDS = {fp.stem: load_sound(fp.name) for fp in SOUND_DIR.glob("jump*")}
+    flint_sound = load_sound("flint.opus")
+    nether_sound = load_sound("nether.opus")
+
+    IMAGES = {
+        fp.stem: load_image(fp.name, scale=0.2) for fp in IMAGE_DIR.glob("spence*.png")
+    }
 
     def __init__(self, dest, *groups):
         super().__init__(*groups)
-        self.image, _ = load_image("spence.png", scale=0.2)
+        self.image = Spencer.IMAGES["spence1"]
         self.orig_image = self.image
 
-        self.image = pg.transform.rotate(self.image, 10)
+        self.rotate_factor = 10
+        self.image = pg.transform.rotate(self.orig_image, self.rotate_factor)
         self.rect = self.image.get_rect()
         self.rect.midbottom = dest
 
         self.velocity = pg.Vector2(0, 0)
         self.position = pg.Vector2(self.rect.midbottom)
-        self.on_ground = True
-        self.air_time = 0
 
+        self.on_ground = True
+        self.fast_falling = False
+
+        self.air_time = 0
         self.flip_timer = 0
 
     def update(self, delta=None, **kwargs):
         if self.on_ground:
+            self.fast_falling = False
             if self.flip_timer > Spencer.FLIP_SECS:
                 self.flip_timer = 0
-                self.image = pg.transform.flip(self.image, flip_x=True, flip_y=False)
+                self.rotate_factor = -self.rotate_factor
+                self.image = pg.transform.rotate(self.orig_image, self.rotate_factor)
         if delta is not None:
             self.flip_timer += delta
             if not self.on_ground:
@@ -85,7 +96,7 @@ class Spencer(pg.sprite.Sprite):
                 self.position.y = ground_group.sprites()[0].rect.top
                 self.velocity.y = 0
 
-        self.velocity.x *= 0.9
+        self.velocity.x *= Spencer.FRICTION
         self.position += self.velocity * delta
         self.rect.midbottom = self.position
         if self.rect.left <= screen.get_rect().left:
@@ -93,47 +104,136 @@ class Spencer(pg.sprite.Sprite):
         self.rect.clamp_ip(screen.get_rect())
 
     def jump(self):
+        emotes = (self.legs_together, self.hot_hairy, self.sneeze)
+        if self.on_ground and random.random() < 0.3:
+            random.choice(emotes)()
+
         if self.air_time <= self.MAX_AIR_TIME:
             self.velocity.y = Spencer.JUMP_VELOCITY
             self.on_ground = False
+
+    def legs_together(self):
+        self.image = self.IMAGES["spence2"]
+
+    def hot_hairy(self):
+        self.JUMP_SOUNDS["jump1"].play()
+
+    def sneeze(self):
+        self.JUMP_SOUNDS["jump2"].play()
 
     def move(self, direction):
         if direction == "right":
             self.velocity.x += Spencer.ACCEL * delta
         if direction == "left":
             self.velocity.x -= Spencer.ACCEL * delta
+        if direction == "down":
+            if not self.on_ground:
+                self.velocity.y += 10000 * delta
+                print(all_sprites)
+                if not self.fast_falling:
+                    self.fast_falling = True
+                    FastFall(self, all_sprites)
 
     def emote(self):
-        emotes = (self.peace,)
+        emotes = (self.peace, self.pika)
         random.choice(emotes)()
 
     def peace(self):
         Peace(self, all_sprites)
+        ChadFace(self, all_sprites)
+
+    def pika(self):
+        PikaFace(self, all_sprites)
+        Spencer.flint_sound.play()
+
+    def animate(self):
+        pass
 
 
 class Peace(pg.sprite.Sprite):
-    IMAGE, _ = load_image("peace.png", scale=0.06)
+    IMAGE = load_image("peace.png", scale=0.06)
     LIFETIME = 0.5
 
     def __init__(self, target, *groups):
         super().__init__(*groups)
-        self.image = pg.transform.rotate(Peace.IMAGE, 15)
+        self.image = pg.transform.flip(Peace.IMAGE, flip_x=True, flip_y=False)
+        self.image = pg.transform.rotate(self.image, -20)
         self.target = target
-        self.rect = self.image.get_rect(midright=self.target.rect.midleft)
+        self.rect = self.image.get_rect(midleft=self.target.rect.midright)
         self.age = 0
         peace_sound.play()
 
     def update(self, delta, *args, **kwargs):
-        self.rect.midright = self.target.rect.midleft
-        self.rect.x += 60
-        self.rect.y -= 30
+        self.rect.midleft = self.target.rect.midright
+        self.rect.move_ip(-50, -30)
+
         self.age += delta
         if self.age > Peace.LIFETIME:
             self.kill()
 
 
+class ChadFace(pg.sprite.Sprite):
+    IMAGE = load_image("chadface.PNG", scale=0.07)
+    LIFETIME = 0.5
+
+    def __init__(self, target, *groups):
+        super().__init__(*groups)
+        self.image = pg.transform.rotate(ChadFace.IMAGE, 15)
+        self.target = target
+        self.rect = self.image.get_rect(midtop=self.target.rect.midtop)
+        self.age = 0
+
+    def update(self, delta, *args, **kwargs):
+        self.rect.midtop = self.target.rect.midtop
+        self.rect.move_ip(0, -10)
+
+        self.age += delta
+        if self.age > ChadFace.LIFETIME:
+            self.kill()
+
+
+class PikaFace(pg.sprite.Sprite):
+    IMAGE = load_image("pika.png", scale=0.07)
+    LIFETIME = 0.5
+
+    def __init__(self, target, *groups):
+        super().__init__(*groups)
+        self.image = pg.transform.rotate(PikaFace.IMAGE, 15)
+        self.target = target
+        self.rect = self.image.get_rect(midtop=self.target.rect.midtop)
+        self.age = 0
+
+    def update(self, delta, *args, **kwargs):
+        self.rect.midtop = self.target.rect.midtop
+        self.rect.move_ip(0, -10)
+
+        self.age += delta
+        if self.age > PikaFace.LIFETIME:
+            self.kill()
+
+
+class FastFall(pg.sprite.Sprite):
+    IMAGE = load_image("fastfall.png", scale=0.04)
+    LIFETIME = 0.07
+
+    def __init__(self, target, *groups):
+        super().__init__(*groups)
+        self.image = pg.transform.rotate(FastFall.IMAGE, 15)
+        self.target = target
+        self.rect = self.image.get_rect(bottomright=self.target.rect.topleft)
+        self.age = 0
+
+    def update(self, delta, *args, **kwargs):
+        self.rect.bottomright = self.target.rect.topleft
+        self.rect.move_ip(40, 0)
+
+        self.age += delta
+        if self.age > FastFall.LIFETIME:
+            self.kill()
+
+
 class Ground(pg.sprite.Sprite):
-    IMAGE, _ = load_image("ground.png", scale=0.2)
+    IMAGE = load_image("ground.png", scale=0.2)
 
     distance_since_cactus = 0
 
@@ -152,14 +252,13 @@ class Ground(pg.sprite.Sprite):
 class Cactus(pg.sprite.Sprite):
     BEFORE_ALLOWABLE_SPAWN = 100
     AFTER_ALLOWABLE_SPAWN = 500
-    IMAGE_RECT_TUPLES = [
-        load_image(fp.name, scale=0.2) for fp in IMAGE_DIR.glob("cactus*.png")
-    ]
+    MAX_DISTANCE_SINCE_SPAWN = 1500
+    IMAGES = [load_image(fp.name, scale=0.2) for fp in IMAGE_DIR.glob("cactus*.png")]
     spawn_chance = 0.25
 
     def __init__(self, *groups):
         super().__init__(*groups)
-        self.image, _ = random.choice(Cactus.IMAGE_RECT_TUPLES)
+        self.image = random.choice(Cactus.IMAGES)
         self.rect = self.image.get_rect()
         self.rect.left = screen.get_rect().right
         Ground.distance_since_cactus = 0
@@ -175,7 +274,7 @@ class Cactus(pg.sprite.Sprite):
 
 
 class Explosion(pg.sprite.Sprite):
-    IMAGE, _ = load_image("explosion.png", scale=0.2)
+    IMAGE = load_image("explosion.png", scale=0.2)
 
     def __init__(self, target, *groups):
         super().__init__(*groups)
@@ -219,6 +318,7 @@ spencer = Spencer((75, 400), all_sprites)
 
 thunder_sound = load_sound("thunder.mp3")
 peace_sound = load_sound("peace.mp3")
+freddy_sound = load_sound("freddy.opus")
 speed = INITIAL_SPEED
 
 
@@ -231,6 +331,31 @@ def play_song():
     pg.mixer.music.load(song)
     pg.mixer.music.set_volume(0.7)
     pg.mixer.music.play(-1)
+
+
+def game_over():
+    def freddy():
+        class GoodBye(pg.sprite.Sprite):
+            def __init__(self, *groups):
+                super().__init__(*groups)
+                self.image = load_image("babySpence.JPG")
+                self.image = pg.transform.scale(self.image, screen.get_size())
+                self.rect = self.image.get_rect()
+
+        GoodBye(all_sprites)
+        freddy_sound.play()
+
+    def explosion():
+        Explosion(spencer, all_sprites)
+        thunder_sound.play()
+
+    choices = (explosion, freddy)
+    weights = (0.9, 0.1)
+    global speed
+    spencer.kill()
+    pg.mixer.music.stop()
+    speed = 0
+    random.choices(choices, weights=weights, k=1)[0]()
 
 
 play_song()
@@ -255,8 +380,12 @@ while running:
             spencer.move("right")
         if keys[pg.K_a]:
             spencer.move("left")
+    if keys[pg.K_s]:
+        spencer.move("down")
 
     # TODO: change to time not distance?
+    if -Ground.distance_since_cactus > Cactus.MAX_DISTANCE_SINCE_SPAWN:
+        Cactus(all_sprites, cactus_group)
     if random.random() < (Cactus.spawn_chance * delta) and not (
         Cactus.BEFORE_ALLOWABLE_SPAWN
         < -Ground.distance_since_cactus
@@ -280,17 +409,14 @@ while running:
         ground_group.sprites()[0].kill()
 
     if spencer.rect.collideobjects(cactus_group.sprites()) and spencer.alive():
-        thunder_sound.play()
-        spencer.kill()
-        speed = 0
-        Explosion(spencer, all_sprites)
+        game_over()
 
     if cactus_group:
         cactus = cactus_group.sprites()[0]
-        if spencer.rect.center >= cactus.rect.center and not cactus.passed:
+        if spencer.rect.left >= cactus.rect.centerx and not cactus.passed:
             cactus.passed = True
             score.increase(1)
-            if random.random() < 1.0:
+            if random.random() < 0.3:
                 spencer.emote()
             if not score.score % DIFFICULTY_INTERVAL:
                 speed *= DIFFICULTY_MULTIPLIER
