@@ -418,7 +418,7 @@ while running:
             running = False
         if event.type == LAO_CLICKED:
             coin_sound.play()
-            score.increase(3)
+            score.increase(2)
 
     keys = pg.key.get_pressed()
 
