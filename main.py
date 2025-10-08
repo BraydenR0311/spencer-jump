@@ -133,7 +133,6 @@ class Spencer(pg.sprite.Sprite):
         if direction == "down":
             if not self.on_ground:
                 self.velocity.y += 10000 * delta
-                print(all_sprites)
                 if not self.fast_falling:
                     self.fast_falling = True
                     FastFall(self, all_sprites)
@@ -209,7 +208,7 @@ class PikaFace(pg.sprite.Sprite):
 
     def update(self, delta, *args, **kwargs):
         self.rect.midtop = self.target.rect.midtop
-        self.rect.move_ip(0, -10)
+        self.rect.move_ip(30, -10)
 
         self.age += delta
         if self.age > PikaFace.LIFETIME:
@@ -328,7 +327,6 @@ class Lao(pg.sprite.Sprite):
         if delta is not None:
             distance = speed * delta
             self.rect.move_ip(distance, math.sin(self.sin * 10) * 5)
-            print(math.sin(self.sin))
 
         pos = pg.mouse.get_pos()
         click, _, _ = pg.mouse.get_pressed()
